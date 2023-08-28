@@ -22,7 +22,7 @@ This is a small collection of systemd units and supporting scripts to help you i
 If you want to customize the install you can export the following environment variables:
 
 ```bash
-export UNIT_FILES=/
+export UNIT_FILES=/full/path/to/defined-systemd-units/units
 export UNIT_DIR=/usr/lib/systemd/system
 export BIN_FILES=/full/path/to/defined-systemd-units/bin
 export BIN_DIR=/usr/bin
@@ -41,8 +41,8 @@ You will need to collect a few bits of information from [defined.net](https://ad
     * hosts:create
     * hosts:delete
     * hosts:enroll
-1. Your `networkID`. It can be found in the top left section of the menu in the admin panel.
-1. A [role](https://docs.defined.net/guides/creating-firewalls-using-roles/#creating-roles)
+1. A Network ID. Your `networkID`. It can be found in the top left section of the menu in the admin panel.
+1. A [Role](https://docs.defined.net/guides/creating-firewalls-using-roles/#creating-roles) ID
 
 Once you have the above information you will want to save these as key value pairs in `/etc/defined/dnctl`.
 
@@ -64,7 +64,9 @@ export DN_NETWORK_ID=network-MAI8WU2YAHN5THEESOOKEE7NAH
 export DN_ROLE_ID=role-AICHING2OHGHEI9QUEIZOO7EIZ
 ```
 
-and then as the `root` user run `dnctl write_config` and it will create `/etc/defined/dnctl` for you. This is useful if you are enrolling an ephemeral environment such as a GitHub Action. Check out our GitHub Action [action-dnclient](https://github.com/quickvm/action-dnclient) which can be used to join your Defined.net overlay network. Think deployments on internal infra or accessing internal resources from your GitHub Action runs.
+and then as the `root` user run `dnctl write_config` and it will create `/etc/defined/dnctl` for you.
+
+This is useful if you are enrolling an ephemeral environment such as a GitHub Action. Check out our GitHub Action [action-dnclient](https://github.com/quickvm/action-dnclient) which can be used to join your Defined.net overlay network. Think deployments on internal infra or accessing internal resources from your GitHub Action runs.
 
 Note: If you export the above to your shell environment you need to `sudo su -` to the `root` user first. If you run `sudo dnctl write_config` as a non root user, the exported `DN_` variables will not work.
 
