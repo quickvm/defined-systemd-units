@@ -1,0 +1,16 @@
+[Unit]
+Description=Enroll and unenroll a host in Defined.net
+ConditionFileIsExecutable=${BIN_DIR}/dnctl
+After=network-online.target dnclient.service
+Wants=network-online.target dnclient.service
+
+[Service]
+EnvironmentFile=/etc/defined/dnctl
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=${BIN_DIR}/dnctl enroll
+ExecReload=${BIN_DIR}/dnctl reenroll
+ExecStop=${BIN_DIR}/dnctl unenroll
+
+[Install]
+WantedBy=multi-user.target

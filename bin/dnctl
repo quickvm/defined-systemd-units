@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+#
+# Copyright (c) 2023 QuickVM, LLC <contact@quickvm.com> All Rights Reserved.
+
+set -e
+
+# Load variables from env
+: ${DN_API_TOKEN:-}
+: ${DN_NETWORK_ID:-}
+: ${DN_ROLE_ID:-}
+: ${DN_IP_ADDRESS:-}
+: ${DN_SKIP_UNENROLL:="false"}
+
+# Load variables from /etc/defined/dnctl if it exists
+if [[ -f /etc/defined/dnctl ]]; then
+  export $(grep -v '^#' /etc/defined/dnctl | xargs)
+fi
+
+[[ -v DN_API_TOKEN ]] || { echo "DN_API_TOKEN is unset! Exiting!"; exit 1; }
+[[ -v DN_NETWORK_ID ]] || { echo "DN_API_TOKEN is unset! Exiting!"; exit 1; }
+[[ -v DN_ROLE_ID ]] || { echo "DN_ROLE_ID is unset! Exiting!"; exit 1; }
+[[ ${DN_API_TOKEN} ]] || { echo "DN_API_TOKEN is empty! Exiting!"; exit 1; }
+[[ ${DN_NETWORK_ID} ]] || { echo "DN_NETWORK_ID is empty! Exiting!"; exit 1; }
+[[ ${DN_ROLE_ID} ]] || { echo "DN_ROLE_ID is empty! Exiting!"; exit 1; }
+
+start(){
+  systemctl start dnclient.service
+}
+
+stop(){
+  systemctl stop dnclient.service
+}
+
+restart(){
+  systemctl restart dnclient.service
+}
+
+enable(){
+  systemctl enable dnclient.service
+  systemctl enable dnctl.service
+}
+
+write_config(){
+  if [[ -f /etc/defined/dnctl ]]; then
+    echo "The file /etc/defined/dnctl exists! Delete it to write a new dnctl configuration file."
+  fi
+  if [[ -z "$DN_IP_ADDRESS" ]]; then
+    cat << EOF > /etc/defined/dnctl
+DN_API_TOKEN=${DN_API_TOKEN}
+DN_NETWORK_ID=${DN_NETWORK_ID}
+DN_ROLE_ID=${DN_ROLE_ID}
+DN_SKIP_UNENROLL=${DN_SKIP_UNENROLL}
+EOF
+  else
+    cat << EOF > /etc/defined/dnctl
+DN_API_TOKEN=${DN_API_TOKEN}
+DN_NETWORK_ID=${DN_NETWORK_ID}
+DN_ROLE_ID=${DN_ROLE_ID}
+DN_SKIP_UNENROLL=${DN_SKIP_UNENROLL}
+DN_IP_ADDRESS=${DN_IP_ADDRESS}
+EOF
+  fi
+    chmod 0640 /etc/defined/dnctl
+}
+
+enroll(){
+  DN_NAME=$(hostname)
+
+  if [[ -f /etc/defined/dnclient.yml ]]; then
+    echo "/etc/defined/dnclient.yml found! Is this host already enrolled? Skipping enrollment..."
+    exit 0
+  fi
+
+  if ! systemctl is-active --quiet dnclient.service; then
+      echo "dnclient.service is not running! Exiting!"
+      exit 1
+  fi
+
+  if [[ -z "$DN_IP_ADDRESS" ]]; then
+    ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID}'
+  else
+    ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID, "ipAddress": $ipAddress}'
+  fi
+
+  ENROLLMENT_DATA=$(jq --compact-output --null-input \
+        --arg name "${DN_NAME}" \
+        --arg networkID "${DN_NETWORK_ID}" \
+        --arg roleID "${DN_ROLE_ID}" \
+        --arg ipAddress "${DN_IP_ADDRESS}" \
+        "${ENROLLMENT_JSON}")
+  echo "Enrollment Data: ${ENROLLMENT_DATA}"
+
+  ENROLLMENT_RESPONSE=$(curl -s -L -X POST 'https://api.defined.net/v1/host-and-enrollment-code' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json' \
+  -H "Authorization: Bearer ${DN_API_TOKEN}" \
+  --data-raw ${ENROLLMENT_DATA})
+  echo "Enrollment Response: ${ENROLLMENT_RESPONSE}"
+
+  ENROLLMENT_CODE=$(echo ${ENROLLMENT_RESPONSE} | jq -r .data.enrollmentCode.code)
+  echo "Enrollment Code: ${ENROLLMENT_CODE}"
+
+  echo "Enrolling Host: $(echo ${ENROLLMENT_RESPONSE} | jq -r .data.host.id)"
+  dnclient enroll -code ${ENROLLMENT_CODE}
+}
+
+unenroll(){
+  if [[ "${DN_SKIP_UNENROLL}" == "true" ]]; then
+    echo "DN_SKIP_UNENROLL set to true. Skipping unenroll!"
+    exit 0
+  fi
+
+  if [[ -f /etc/defined/dnclient.yml ]]; then
+    DN_HOST_ID=$(grep -F host_id /etc/defined/dnclient.yml |cut -d: -f2|xargs)
+  else
+    echo "/etc/defined/dnclient.yml is not found! Is this host enrolled? Exiting.."
+    exit 1
+  fi
+
+  echo "Unenrolling host: ${DN_HOST_ID}"
+  curl -sSL -X DELETE "https://api.defined.net/v1/hosts/${DN_HOST_ID}" -H "Accept: application/json" \
+  -H "Authorization: Bearer ${DN_API_TOKEN}"
+  rm -f /etc/defined/dnclient.yml
+}
+
+reenroll(){
+  unenroll
+  enroll
+}
+
+helptext(){
+cat <<'EOF'
+
+dnctl: The unofficial Swiss Army knife for defined.net
+
+usage: dnctl command
+
+commands:
+  start: Start dnclient.service
+  stop: Stop dnclient.service
+  restart: Restart dnclient.service
+  enable: Enable dnclient.service and dnctl.service
+  write_config: Read the shell environment for:
+    DN_API_TOKEN, DN_NETWORK_ID, DN_ROLE_ID and DN_IP_ADDRESS (optional)
+    and write them to /etc/defined/dnclient.yml
+  enroll: Enroll the host into defined.net
+  unenroll: Unenroll the host from defined.net
+  reenroll: Unenroll and Enroll the host
+  help: Show this message
+
+EOF
+}
+
+case "$1" in
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  restart)
+    restart
+    ;;
+  enable)
+    enable
+    ;;
+  write_config)
+    write_config
+    ;;
+  enroll)
+    enroll
+    ;;
+  unenroll)
+    unenroll
+    ;;
+  reenroll)
+    reenroll
+    ;;
+  help)
+    helptext
+    exit 0
+    ;;
+  *)
+    echo "Unknown command!"
+    helptext
+    exit 1
+    ;;
+esac

@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+#
+# Copyright (c) 2023 QuickVM, LLC <contact@quickvm.com> All Rights Reserved.
+
+set -e
+
+OS_ARCH=$(arch)
+OS_TYPE=$(uname)
+
+[[ "${OS_TYPE}" == "Linux" ]] || { echo "Only Linux is supported!"; exit 1; }
+[[ "${UID}" == 0 ]] || { echo "Please run this as root!"; exit 1; }
+
+case "${OS_ARCH}" in
+  aarch64) ARCH="arm64" ;;
+  armv5*) ARCH="armv5" ;;
+  armv6*) ARCH="armv6" ;;
+  armv7*) ARCH="armv7" ;;
+  i386) ARCH="386" ;;
+  i686) ARCH="386" ;;
+  x86_64) ARCH="amd64" ;;
+  x86) ARCH="386" ;;
+  *) ARCH="unknown" ;;
+esac
+
+[[ "${ARCH}" != "unknown" ]] || { echo "Unknown CPU arch!"; exit 1; }
+
+export OSARCH="$(echo ${OS_TYPE}|sed -e 's/Linux/linux/g')-${ARCH}"
+
+: ${UNIT_FILES:=./units}
+: ${UNIT_DIR:=/etc/systemd/system}
+: ${BIN_FILES:=./bin}
+: ${BIN_DIR:=/usr/local/bin}
+: ${DEFINEDPATH:=/etc/defined} # Cuztomize this at your own risk. dnclient expects it's config to be in /etc/defined!
+: ${DN_VERSION:="latest"}
+
+DN_DOWNLOAD_URL=$(curl -sL https://api.defined.net/v1/downloads | jq --arg osarch "${OSARCH}" --arg version "${DN_VERSION}" -r '.data.dnclient|.[ $version ]|.[ $osarch ]')
+
+## Start Override to use https://dl.defined.net/70acb3ad/v0.2.2-beta3/linux/ which has systemd type=notify support
+DN_SHA="70acb3ad"
+DN_VERSION="v0.2.2-beta3"
+DN_DOWNLOAD_URL="https://dl.defined.net/${DN_SHA}/${DN_VERSION}/linux/${ARCH}/dnclient"
+## End Override
+
+mkdir -p "${DEFINEDPATH}"
+
+[[ -d ${DEFINEDPATH} ]] || { echo "The ${DEFINEDPATH} directory does not exist! Please create it!"; exit 1; }
+[[ -d ${UNIT_FILES} ]] || { echo "The ${UNIT_FILES} directory cannot be found! Please run this from the repo root directory!"; exit 1; }
+[[ -d ${BIN_FILES} ]] || { echo "The ${BIN_FILES} directory cannot be found! Please run this from the repo root directory!"; exit 1; }
+
+# Download and install dnclient
+if [[ -f ${BIN_DIR}/dnclient ]]; then
+    echo ""
+    echo "${BIN_DIR}/dnclient is already installed!"
+    echo "Stop dnclient and remove ${BIN_DIR}/dnclient to reinstall."
+    echo "Skipping dnclient download and install..."
+  else
+    curl -sSL ${DN_DOWNLOAD_URL} -o ${BIN_DIR}/dnclient && chmod +x ${BIN_DIR}/dnclient
+  fi
+
+# Install systemd service units
+export BIN_DIR=${BIN_DIR}
+install -m 0644 <(envsubst < units/dnclient.service) ${UNIT_DIR}/dnclient.service
+install -m 0644 <(envsubst < units/dnctl.service) ${UNIT_DIR}/dnctl.service
+
+# Install dnctl
+install -m 0750 bin/dnctl ${BIN_DIR}/dnctl
+
+systemctl daemon-reload
+
+echo ""
+echo "Great job, the Defined.net systemd units and dnctl are now installed! Create /etc/defined/dnctl and run dnctl enable and dnctl start!"
+echo ""
