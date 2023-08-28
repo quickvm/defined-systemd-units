@@ -55,13 +55,13 @@ DN_ROLE_ID=${DN_ROLE_ID}
 DN_SKIP_UNENROLL=${DN_SKIP_UNENROLL}
 EOF
 
-  if [[ ! -z "${DN_IP_ADDRESS}" ]]; then
+  if [[ "${DN_IP_ADDRESS}" ]]; then
     cat << EOF >> /etc/defined/dnctl
 DN_IP_ADDRESS=${DN_IP_ADDRESS}
 EOF
   fi
 
-  if [[ ! -z "${DN_NAME}" ]]; then
+  if [[ "${DN_NAME}" ]]; then
     cat << EOF >> /etc/defined/dnctl
 DN_NAME="${DN_NAME}"
 EOF
@@ -81,16 +81,16 @@ enroll(){
       exit 1
   fi
 
-  if [[ -z "${DN_NAME}" ]]; then
-    DN_ENROLLMENT_NAME="dsu-$(hostname)"
-  else
+  if [[ "${DN_NAME}" ]]; then
     DN_ENROLLMENT_NAME="${DN_NAME}"
+  else
+    DN_ENROLLMENT_NAME="dsu-$(hostname)"
   fi
 
-  if [[ -z "${DN_IP_ADDRESS}" ]]; then
-    ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID}'
-  else
+  if [[ "${DN_IP_ADDRESS}" ]]; then
     ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID, "ipAddress": $ipAddress}'
+  else
+    ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID}'
   fi
 
   ENROLLMENT_DATA=$(jq --compact-output --null-input \
@@ -153,7 +153,7 @@ commands:
   enable: Enable dnclient.service and dnctl.service
   write_config: Read the shell environment for:
     DN_API_KEY, DN_NETWORK_ID, DN_ROLE_ID and DN_IP_ADDRESS (optional)
-    and write them to /etc/defined/dnclient.yml
+    and write them to /etc/defined/dnctl
   enroll: Enroll the host into defined.net
   unenroll: Unenroll the host from defined.net
   reenroll: Unenroll and Enroll the host
