@@ -26,7 +26,7 @@ export UNIT_FILES=/full/path/to/defined-systemd-units/units
 export UNIT_DIR=/usr/lib/systemd/system
 export BIN_FILES=/full/path/to/defined-systemd-units/bin
 export BIN_DIR=/usr/bin
-export DN_VERSION=1.2.1
+export DN_VERSION=0.3.2
 ```
 
 Note: The `dnclient.service` unit that this repository provides expects `dnclient` to support systemd type=notify. The current `v0.2.2-beta3` version of `dnclient` has this support, so the `install` script overrides the version to `v0.2.2-beta3`. Setting `DN_VERSION` to a lower version might not work as expected. You can also change `Type=notify` in `units/dnclient.service` to `Type=simple` and use an older version if you wish.

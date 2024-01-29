@@ -34,13 +34,7 @@ export OSARCH="$(echo ${OS_TYPE}|sed -e 's/Linux/linux/g')-${ARCH}"
 : ${DEFINEDPATH:=/etc/defined} # Cuztomize this at your own risk. dnclient expects it's config to be in /etc/defined!
 : ${DN_VERSION:="latest"}
 
-DN_DOWNLOAD_URL=$(curl -sL https://api.defined.net/v1/downloads | jq --arg osarch "${OSARCH}" --arg version "${DN_VERSION}" -r '.data.dnclient|.[ $version ]|.[ $osarch ]')
-
-## Start Override to use https://dl.defined.net/70acb3ad/v0.2.2-beta3/linux/ which has systemd type=notify support
-DN_SHA="70acb3ad"
-DN_VERSION="v0.2.2-beta3"
-DN_DOWNLOAD_URL="https://dl.defined.net/${DN_SHA}/${DN_VERSION}/linux/${ARCH}/dnclient"
-## End Override
+DN_DOWNLOAD_URL=$(curl -sL https://api.defined.net/v1/downloads | jq --arg osarch "${OS_ARCH}" --arg version "${DN_VERSION}" -r '.data.dnclient|.[ $version ]|.[ $osarch ]')
 
 mkdir -p "${DEFINEDPATH}"
 
