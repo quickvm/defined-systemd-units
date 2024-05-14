@@ -88,18 +88,25 @@ enroll(){
   fi
 
   if [[ "${DN_IP_ADDRESS}" ]]; then
-    ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID, "ipAddress": $ipAddress}'
+    ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID, "tags": $tags, "ipAddress": $ipAddress}'
   else
-    ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID}'
+    ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID, "tags": $tags}'
   fi
 
-  ENROLLMENT_DATA=$(jq --compact-output --null-input \
-        --arg name "${DN_ENROLLMENT_NAME}" \
-        --arg networkID "${DN_NETWORK_ID}" \
-        --arg roleID "${DN_ROLE_ID}" \
-        --arg ipAddress "${DN_IP_ADDRESS}" \
-        "${ENROLLMENT_JSON}")
-  echo "Enrollment Data: ${ENROLLMENT_DATA}"
+  if [[ "${DN_TAGS}" ]]; then
+    DN_TAG_LIST="${DN_TAGS}"
+  else
+    DN_TAG_LIST='[]'
+  fi
+
+ENROLLMENT_DATA=$(jq --compact-output --null-input \
+      --arg name "${DN_ENROLLMENT_NAME}" \
+      --arg networkID "${DN_NETWORK_ID}" \
+      --arg roleID "${DN_ROLE_ID}" \
+      --arg ipAddress "${DN_IP_ADDRESS}" \
+      --argjson tags "${DN_TAG_LIST}" \
+      "${ENROLLMENT_JSON}")
+echo "Enrollment Data: ${ENROLLMENT_DATA}"
 
   ENROLLMENT_RESPONSE=$(curl -H user-agent:defined-systemd-units -s -L -X POST 'https://api.defined.net/v1/host-and-enrollment-code' \
   -H 'Content-Type: application/json' \
@@ -152,7 +159,7 @@ commands:
   restart: Restart dnclient.service
   enable: Enable dnclient.service and dnctl.service
   write_config: Read the shell environment for:
-    DN_API_KEY, DN_NETWORK_ID, DN_ROLE_ID and DN_IP_ADDRESS (optional)
+    DN_API_KEY, DN_NETWORK_ID, DN_ROLE_ID DN_TAGS and DN_IP_ADDRESS (optional)
     and write them to /etc/defined/dnctl
   enroll: Enroll the host into defined.net
   unenroll: Unenroll the host from defined.net

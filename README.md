@@ -53,6 +53,7 @@ DN_ROLE_ID=role-AICHING2OHGHEI9QUEIZOO7EIZ # Required. The role that the host wi
 DN_SKIP_UNENROLL=true # Optional. If set to true the host will not unenroll on reboot or shut down. Defaults to false.
 DN_IP_ADDRESS=100.100.0.10 # Optional. If set to an IP in your defined.net network CIDR range it will enroll the host with that IP address.
 DN_NAME="my-custom-name-$(hostname)" # Optional. You can customize the name you give your host in defined.net. Defaults to dsu-$(hostname)
+DN_TAGS='["http:allow","foo:bar"]' # Optional. JSON formatted array of tags to add to a host. Defaults to []
 ```
 
 Note: `DN_SKIP_UNENROLL=true` should only be used on hosts that you want to stay enrolled over a long period of time. If you set `DN_SKIP_UNENROLL` on servers that are ephemeral in nature you will end up with a bunch of enrolled hosts that you will manually have to clean up at some point. Set `DN_SKIP_UNENROLL=true` with care!
@@ -91,7 +92,7 @@ Once the units are enabled and started you can check out <https://admin.defined.
 
 MIT License
 
-Copyright (c) 2023 QuickVM
+Copyright (c) 2024 QuickVM
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
