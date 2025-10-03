@@ -129,7 +129,7 @@ unenroll(){
   fi
 
   if [[ -f /etc/defined/dnclient.yml ]]; then
-    DN_HOST_ID=$(grep -F host_id /etc/defined/dnclient.yml |cut -d: -f2|xargs)
+    DN_HOST_ID=$(grep -F host_id /etc/defined/dnclient.yml | awk '{ print $2 }' | head -1 )
   else
     echo "/etc/defined/dnclient.yml is not found! Is this host enrolled? Exiting.."
     exit 1
