@@ -212,57 +212,57 @@ dnctl: The unofficial Swiss Army knife for defined.net
 usage: dnctl command
 
 commands:
-install: Download and install dnclient to /usr/local/bin
-start: Start dnclient.service
-stop: Stop dnclient.service
-restart: Restart dnclient.service
-enable: Enable dnclient.service and dnclient-enroll.service
-write_config: Read the shell environment for:
-    DN_API_KEY, DN_NETWORK_ID, DN_ROLE_ID DN_TAGS and DN_IP_ADDRESS (optional)
-    and write them to /etc/defined/dnctl
-enroll: Enroll the host into defined.net
-unenroll: Unenroll the host from defined.net
-reenroll: Unenroll and Enroll the host
-help: Show this message
+    install: Download and install dnclient to /usr/local/bin
+    start: Start dnclient.service
+    stop: Stop dnclient.service
+    restart: Restart dnclient.service
+    enable: Enable dnclient.service and dnclient-enroll.service
+    write_config: Read the shell environment for:
+        DN_API_KEY, DN_NETWORK_ID, DN_ROLE_ID DN_TAGS and DN_IP_ADDRESS (optional)
+        and write them to /etc/defined/dnctl
+    enroll: Enroll the host into defined.net
+    unenroll: Unenroll the host from defined.net
+    reenroll: Unenroll and Enroll the host
+    help: Show this message
 
 EOF
 }
 
 case "$1" in
-install)
-    install_dnclient
-    ;;
-start)
-    start
-    ;;
-stop)
-    stop
-    ;;
-restart)
-    restart
-    ;;
-enable)
-    enable
-    ;;
-write_config)
-    write_config
-    ;;
-enroll)
-    enroll
-    ;;
-unenroll)
-    unenroll
-    ;;
-reenroll)
-    reenroll
-    ;;
-help)
-    helptext
-    exit 0
-    ;;
-*)
-    echo "Unknown command!"
-    helptext
-    exit 1
-    ;;
+    install)
+        install_dnclient
+        ;;
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        restart
+        ;;
+    enable)
+        enable
+        ;;
+    write_config)
+        write_config
+        ;;
+    enroll)
+        enroll
+        ;;
+    unenroll)
+        unenroll
+        ;;
+    reenroll)
+        reenroll
+        ;;
+    help)
+        helptext
+        exit 0
+        ;;
+    *)
+        echo "Unknown command!"
+        helptext
+        exit 1
+        ;;
 esac
