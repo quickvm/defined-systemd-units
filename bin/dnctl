@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 #
-# Copyright (c) 2023 QuickVM, LLC <contact@quickvm.com> All Rights Reserved.
+# Copyright (c) 2025 QuickVM, LLC <contact@quickvm.com> All Rights Reserved.
 
 set -e
-
 
 # Load variables from env
 : ${DN_API_KEY:-}
@@ -12,138 +11,195 @@ set -e
 : ${DN_ROLE_ID:-}
 : ${DN_IP_ADDRESS:-}
 : ${DN_SKIP_UNENROLL:="false"}
+: ${DN_MIRROR_IP:="false"}
 : ${DN_NAME:-}
 
 # Load variables from /etc/defined/dnctl if it exists
 if [[ -f /etc/defined/dnctl ]]; then
-  export $(grep -v '^#' /etc/defined/dnctl | xargs)
+export $(grep -v '^#' /etc/defined/dnctl | xargs)
 fi
 
-[[ -v DN_API_KEY ]] || { echo "DN_API_KEY is unset! Exiting!"; exit 1; }
-[[ -v DN_NETWORK_ID ]] || { echo "DN_API_KEY is unset! Exiting!"; exit 1; }
-[[ -v DN_ROLE_ID ]] || { echo "DN_ROLE_ID is unset! Exiting!"; exit 1; }
-[[ ${DN_API_KEY} ]] || { echo "DN_API_KEY is empty! Exiting!"; exit 1; }
-[[ ${DN_NETWORK_ID} ]] || { echo "DN_NETWORK_ID is empty! Exiting!"; exit 1; }
-[[ ${DN_ROLE_ID} ]] || { echo "DN_ROLE_ID is empty! Exiting!"; exit 1; }
+if [[ "${DN_MIRROR_IP}" == "true" ]]; then
+DEFAULT_ROUTE_IP=$(ip -j -4 route show|jq -rM '.[] |select(.dst == "default").prefsrc')
+LAST_OCTET=$(echo $DEFAULT_ROUTE_IP |cut -d. -f4)
+DN_NETWORK_CIDR=$(curl -sL "https://api.defined.net/v1/networks/${DN_NETWORK_ID}" -H "Accept: application/json" -H "Authorization: Bearer ${DN_API_KEY}" | jq -r .data.cidr |cut -d / -f1|cut -d. -f 1-3)
+
+export DN_IP_ADDRESS="${DN_NETWORK_CIDR}.${LAST_OCTET}"
+
+# Check if DN_IP_ADDRESS is already defined in /etc/defined/dnctl
+if ! grep -q '^DN_IP_ADDRESS=' /etc/defined/dnctl 2>/dev/null; then
+    echo "DN_IP_ADDRESS=${DN_IP_ADDRESS}" >> /etc/defined/dnctl
+fi
+fi
+
+install_dnclient(){
+OS_ARCH=$(arch)
+OS_TYPE=$(uname)
+
+[[ "${OS_TYPE}" == "Linux" ]] || { echo "Only Linux is supported!"; exit 1; }
+
+case "${OS_ARCH}" in
+    aarch64) ARCH="arm64" ;;
+    armv5*) ARCH="armv5" ;;
+    armv6*) ARCH="armv6" ;;
+    armv7*) ARCH="armv7" ;;
+    i386) ARCH="386" ;;
+    i686) ARCH="386" ;;
+    x86_64) ARCH="amd64" ;;
+    x86) ARCH="386" ;;
+    *) ARCH="unknown" ;;
+esac
+
+[[ "${ARCH}" != "unknown" ]] || { echo "Unknown CPU arch!"; exit 1; }
+
+export OSARCH="$(echo ${OS_TYPE}|sed -e 's/Linux/linux/g')-${ARCH}"
+
+: ${BIN_DIR:=/usr/local/bin}
+: ${DEFINEDPATH:=/etc/defined}
+: ${DN_VERSION:="latest"}
+
+DN_DOWNLOAD_URL=$(curl -sL https://api.defined.net/v1/downloads | jq --arg osarch "${OSARCH}" --arg version "${DN_VERSION}" -r '.data.dnclient|.[ $version ]|.[ $osarch ]')
+
+mkdir -p "${DEFINEDPATH}"
+
+if [[ -f ${BIN_DIR}/dnclient ]]; then
+    echo "${BIN_DIR}/dnclient is already installed!"
+    echo "Skipping dnclient download and install..."
+else
+    echo "Downloading dnclient from ${DN_DOWNLOAD_URL}..."
+    curl -sSL ${DN_DOWNLOAD_URL} -o ${BIN_DIR}/dnclient && chmod +x ${BIN_DIR}/dnclient
+    echo "dnclient installed successfully to ${BIN_DIR}/dnclient"
+fi
+}
 
 start(){
-  systemctl start dnclient.service
+systemctl start dnclient.service
 }
 
 stop(){
-  systemctl stop dnclient.service
+systemctl stop dnclient.service
 }
 
 restart(){
-  systemctl restart dnclient.service
+systemctl restart dnclient.service
 }
 
 enable(){
-  systemctl enable dnclient.service
-  systemctl enable dnctl.service
+systemctl enable dnclient.service
+systemctl enable dnclient-enroll.service
 }
 
 write_config(){
-  if [[ -f /etc/defined/dnctl ]]; then
+if [[ -f /etc/defined/dnctl ]]; then
     echo "The file /etc/defined/dnctl exists! Delete it to write a new dnctl configuration file."
-  fi
+fi
 
-  cat << EOF > /etc/defined/dnctl
+cat << EOF > /etc/defined/dnctl
 DN_API_KEY=${DN_API_KEY}
 DN_NETWORK_ID=${DN_NETWORK_ID}
 DN_ROLE_ID=${DN_ROLE_ID}
 DN_SKIP_UNENROLL=${DN_SKIP_UNENROLL}
 EOF
 
-  if [[ "${DN_IP_ADDRESS}" ]]; then
+if [[ "${DN_IP_ADDRESS}" ]]; then
     cat << EOF >> /etc/defined/dnctl
 DN_IP_ADDRESS=${DN_IP_ADDRESS}
 EOF
-  fi
+fi
 
-  if [[ "${DN_NAME}" ]]; then
+if [[ "${DN_NAME}" ]]; then
     cat << EOF >> /etc/defined/dnctl
 DN_NAME="${DN_NAME}"
 EOF
-  fi
+fi
 
-  chmod 0640 /etc/defined/dnctl
+chmod 0640 /etc/defined/dnctl
 }
 
 enroll(){
-  if [[ -f /etc/defined/dnclient.yml ]]; then
+[[ -v DN_API_KEY ]] || { echo "DN_API_KEY is unset! Exiting!"; exit 1; }
+[[ -v DN_NETWORK_ID ]] || { echo "DN_NETWORK_ID is unset! Exiting!"; exit 1; }
+[[ -v DN_ROLE_ID ]] || { echo "DN_ROLE_ID is unset! Exiting!"; exit 1; }
+[[ ${DN_API_KEY} ]] || { echo "DN_API_KEY is empty! Exiting!"; exit 1; }
+[[ ${DN_NETWORK_ID} ]] || { echo "DN_NETWORK_ID is empty! Exiting!"; exit 1; }
+[[ ${DN_ROLE_ID} ]] || { echo "DN_ROLE_ID is empty! Exiting!"; exit 1; }
+
+if [[ -f /etc/defined/dnclient.yml ]]; then
     echo "/etc/defined/dnclient.yml found! Is this host already enrolled? Skipping enrollment..."
     exit 0
-  fi
+fi
 
-  if ! systemctl is-active --quiet dnclient.service; then
-      echo "dnclient.service is not running! Exiting!"
-      exit 1
-  fi
+if ! systemctl is-active --quiet dnclient.service; then
+    echo "dnclient.service is not running! Exiting!"
+    exit 1
+fi
 
-  if [[ "${DN_NAME}" ]]; then
+if [[ "${DN_NAME}" ]]; then
     DN_ENROLLMENT_NAME="${DN_NAME}"
-  else
-    DN_ENROLLMENT_NAME="dsu-$(hostname)"
-  fi
+else
+    DN_ENROLLMENT_NAME="$(hostname)"
+fi
 
-  if [[ "${DN_IP_ADDRESS}" ]]; then
+if [[ "${DN_IP_ADDRESS}" ]]; then
     ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID, "tags": $tags, "ipAddress": $ipAddress}'
-  else
+else
     ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID, "tags": $tags}'
-  fi
+fi
 
-  if [[ "${DN_TAGS}" ]]; then
+if [[ "${DN_TAGS}" ]]; then
     DN_TAG_LIST="${DN_TAGS}"
-  else
+else
     DN_TAG_LIST='[]'
-  fi
+fi
 
 ENROLLMENT_DATA=$(jq --compact-output --null-input \
-      --arg name "${DN_ENROLLMENT_NAME}" \
-      --arg networkID "${DN_NETWORK_ID}" \
-      --arg roleID "${DN_ROLE_ID}" \
-      --arg ipAddress "${DN_IP_ADDRESS}" \
-      --argjson tags "${DN_TAG_LIST}" \
-      "${ENROLLMENT_JSON}")
+    --arg name "${DN_ENROLLMENT_NAME}" \
+    --arg networkID "${DN_NETWORK_ID}" \
+    --arg roleID "${DN_ROLE_ID}" \
+    --arg ipAddress "${DN_IP_ADDRESS}" \
+    --argjson tags "${DN_TAG_LIST}" \
+    "${ENROLLMENT_JSON}")
 echo "Enrollment Data: ${ENROLLMENT_DATA}"
 
-  ENROLLMENT_RESPONSE=$(curl -H user-agent:defined-systemd-units -s -L -X POST 'https://api.defined.net/v1/host-and-enrollment-code' \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json' \
-  -H "Authorization: Bearer ${DN_API_KEY}" \
-  --data-raw ${ENROLLMENT_DATA})
-  echo "Enrollment Response: ${ENROLLMENT_RESPONSE}"
+ENROLLMENT_RESPONSE=$(curl -H user-agent:defined-systemd-units -s -L -X POST 'https://api.defined.net/v1/host-and-enrollment-code' \
+-H 'Content-Type: application/json' \
+-H 'Accept: application/json' \
+-H "Authorization: Bearer ${DN_API_KEY}" \
+--data-raw ${ENROLLMENT_DATA})
+echo "Enrollment Response: ${ENROLLMENT_RESPONSE}"
 
-  ENROLLMENT_CODE=$(echo ${ENROLLMENT_RESPONSE} | jq -r .data.enrollmentCode.code)
-  echo "Enrollment Code: ${ENROLLMENT_CODE}"
+ENROLLMENT_CODE=$(echo ${ENROLLMENT_RESPONSE} | jq -r .data.enrollmentCode.code)
+echo "Enrollment Code: ${ENROLLMENT_CODE}"
 
-  echo "Enrolling Host: $(echo ${ENROLLMENT_RESPONSE} | jq -r .data.host.id)"
-  dnclient enroll -code "${ENROLLMENT_CODE}"
+echo "Enrolling Host: $(echo ${ENROLLMENT_RESPONSE} | jq -r .data.host.id)"
+dnclient enroll -code "${ENROLLMENT_CODE}"
 }
 
 unenroll(){
-  if [[ "${DN_SKIP_UNENROLL}" == "true" ]]; then
+[[ -v DN_API_KEY ]] || { echo "DN_API_KEY is unset! Exiting!"; exit 1; }
+[[ ${DN_API_KEY} ]] || { echo "DN_API_KEY is empty! Exiting!"; exit 1; }
+
+if [[ "${DN_SKIP_UNENROLL}" == "true" ]]; then
     echo "DN_SKIP_UNENROLL set to true. Skipping unenroll!"
     exit 0
-  fi
+fi
 
-  if [[ -f /etc/defined/dnclient.yml ]]; then
+if [[ -f /etc/defined/dnclient.yml ]]; then
     DN_HOST_ID=$(grep -F host_id /etc/defined/dnclient.yml | awk '{ print $2 }' | head -1 )
-  else
+else
     echo "/etc/defined/dnclient.yml is not found! Is this host enrolled? Exiting.."
     exit 1
-  fi
+fi
 
-  echo "Unenrolling host: ${DN_HOST_ID}"
-  curl -H user-agent:defined-systemd-units -sSL -X DELETE "https://api.defined.net/v1/hosts/${DN_HOST_ID}" -H "Accept: application/json" \
-  -H "Authorization: Bearer ${DN_API_KEY}"
-  rm -f /etc/defined/dnclient.yml
+echo "Unenrolling host: ${DN_HOST_ID}"
+curl -H user-agent:defined-systemd-units -sSL -X DELETE "https://api.defined.net/v1/hosts/${DN_HOST_ID}" -H "Accept: application/json" \
+-H "Authorization: Bearer ${DN_API_KEY}"
+rm -f /etc/defined/dnclient.yml
 }
 
 reenroll(){
-  unenroll
-  enroll
+unenroll
+enroll
 }
 
 helptext(){
@@ -154,51 +210,55 @@ dnctl: The unofficial Swiss Army knife for defined.net
 usage: dnctl command
 
 commands:
-  start: Start dnclient.service
-  stop: Stop dnclient.service
-  restart: Restart dnclient.service
-  enable: Enable dnclient.service and dnctl.service
-  write_config: Read the shell environment for:
+install: Download and install dnclient to /usr/local/bin
+start: Start dnclient.service
+stop: Stop dnclient.service
+restart: Restart dnclient.service
+enable: Enable dnclient.service and dnclient-enroll.service
+write_config: Read the shell environment for:
     DN_API_KEY, DN_NETWORK_ID, DN_ROLE_ID DN_TAGS and DN_IP_ADDRESS (optional)
     and write them to /etc/defined/dnctl
-  enroll: Enroll the host into defined.net
-  unenroll: Unenroll the host from defined.net
-  reenroll: Unenroll and Enroll the host
-  help: Show this message
+enroll: Enroll the host into defined.net
+unenroll: Unenroll the host from defined.net
+reenroll: Unenroll and Enroll the host
+help: Show this message
 
 EOF
 }
 
 case "$1" in
-  start)
+install)
+    install_dnclient
+    ;;
+start)
     start
     ;;
-  stop)
+stop)
     stop
     ;;
-  restart)
+restart)
     restart
     ;;
-  enable)
+enable)
     enable
     ;;
-  write_config)
+write_config)
     write_config
     ;;
-  enroll)
+enroll)
     enroll
     ;;
-  unenroll)
+unenroll)
     unenroll
     ;;
-  reenroll)
+reenroll)
     reenroll
     ;;
-  help)
+help)
     helptext
     exit 0
     ;;
-  *)
+*)
     echo "Unknown command!"
     helptext
     exit 1
