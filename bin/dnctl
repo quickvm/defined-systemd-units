@@ -124,14 +124,20 @@ enroll(){
     [[ ${DN_API_KEY} ]] || { echo "DN_API_KEY is empty! Exiting!"; exit 1; }
     [[ ${DN_NETWORK_ID} ]] || { echo "DN_NETWORK_ID is empty! Exiting!"; exit 1; }
     [[ ${DN_ROLE_ID} ]] || { echo "DN_ROLE_ID is empty! Exiting!"; exit 1; }
-    
-    if [[ -f /etc/defined/dnclient.yml ]]; then
-        echo "/etc/defined/dnclient.yml found! Is this host already enrolled? Skipping enrollment..."
+
+    # Determine config path and service name based on DN_NAME
+    CONFIG_PATH="${DN_NAME:+/etc/defined/${DN_NAME}.yml}"
+    CONFIG_PATH="${CONFIG_PATH:-/etc/defined/dnclient.yml}"
+    SERVICE_NAME="${DN_NAME:+dnclient@${DN_NAME}.service}"
+    SERVICE_NAME="${SERVICE_NAME:-dnclient.service}"
+
+    if [[ -f "$CONFIG_PATH" ]]; then
+        echo "$CONFIG_PATH found! Is this host already enrolled? Skipping enrollment..."
         exit 0
     fi
-    
-    if ! systemctl is-active --quiet dnclient.service; then
-        echo "dnclient.service is not running! Exiting!"
+
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo "$SERVICE_NAME is not running! Exiting!"
         exit 1
     fi
     
@@ -173,30 +179,38 @@ enroll(){
     echo "Enrollment Code: ${ENROLLMENT_CODE}"
     
     echo "Enrolling Host: $(echo ${ENROLLMENT_RESPONSE} | jq -r .data.host.id)"
-    dnclient enroll -code "${ENROLLMENT_CODE}"
+    if [[ -n "$DN_NAME" ]]; then
+        dnclient enroll -name "$DN_NAME" -code "${ENROLLMENT_CODE}"
+    else
+        dnclient enroll -code "${ENROLLMENT_CODE}"
+    fi
 }
 
 unenroll(){
     [[ -v DN_API_KEY ]] || { echo "DN_API_KEY is unset! Exiting!"; exit 1; }
     [[ ${DN_API_KEY} ]] || { echo "DN_API_KEY is empty! Exiting!"; exit 1; }
-    
+
+    # Determine config path based on DN_NAME
+    CONFIG_PATH="${DN_NAME:+/etc/defined/${DN_NAME}.yml}"
+    CONFIG_PATH="${CONFIG_PATH:-/etc/defined/dnclient.yml}"
+
     if [[ "${DN_SKIP_UNENROLL}" == "true" ]]; then
         echo "DN_SKIP_UNENROLL set to true. Skipping unenroll!"
         exit 0
     fi
-    
-    if [[ -f /etc/defined/dnclient.yml ]]; then
-        DN_HOST_ID=$(grep -F host_id /etc/defined/dnclient.yml | awk '{ print $2 }' | head -1 )
+
+    if [[ -f "$CONFIG_PATH" ]]; then
+        DN_HOST_ID=$(grep -F host_id "$CONFIG_PATH" | awk '{ print $2 }' | head -1 )
     else
-        echo "/etc/defined/dnclient.yml is not found! Is this host enrolled? Exiting.."
+        echo "$CONFIG_PATH is not found! Is this host enrolled? Exiting.."
         exit 1
     fi
-    
+
     echo "Unenrolling host: ${DN_HOST_ID}"
     curl -H user-agent:defined-systemd-units -sSL -X DELETE "https://api.defined.net/v1/hosts/${DN_HOST_ID}" \
     -H "Accept: application/json" \
     -H "Authorization: Bearer ${DN_API_KEY}"
-    rm -f /etc/defined/dnclient.yml
+    rm -f "$CONFIG_PATH"
 }
 
 reenroll(){
@@ -218,12 +232,18 @@ commands:
     restart: Restart dnclient.service
     enable: Enable dnclient.service and dnclient-enroll.service
     write_config: Read the shell environment for:
-        DN_API_KEY, DN_NETWORK_ID, DN_ROLE_ID DN_TAGS and DN_IP_ADDRESS (optional)
+        DN_API_KEY, DN_NETWORK_ID, DN_ROLE_ID, DN_NAME (optional),
+        DN_TAGS (optional), and DN_IP_ADDRESS (optional)
         and write them to /etc/defined/dnctl
     enroll: Enroll the host into defined.net
     unenroll: Unenroll the host from defined.net
     reenroll: Unenroll and Enroll the host
     help: Show this message
+
+environment variables:
+    DN_NAME: Network name for instantiated services. When set, uses
+        dnclient@${DN_NAME}.service and /etc/defined/${DN_NAME}.yml
+        instead of dnclient.service and /etc/defined/dnclient.yml
 
 EOF
 }
