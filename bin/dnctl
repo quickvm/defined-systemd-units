@@ -12,7 +12,7 @@ set -e
 : ${DN_IP_ADDRESS:-}
 : ${DN_SKIP_UNENROLL:="false"}
 : ${DN_MIRROR_IP:="false"}
-: ${DN_NETWORK_NAME:-}
+: ${DN_NETWORK_NAME:=defined}
 : ${DN_HOSTNAME:-}
 : ${DN_CLOUD_PROVIDER:-}
 
@@ -114,10 +114,8 @@ fi
 }
 
 # Determine service name and config path based on DN_NETWORK_NAME
-SERVICE_NAME="${DN_NETWORK_NAME:+dnclient@${DN_NETWORK_NAME}.service}"
-SERVICE_NAME="${SERVICE_NAME:-dnclient.service}"
-CONFIG_PATH="${DN_NETWORK_NAME:+/etc/defined/${DN_NETWORK_NAME}/dnclient.yml}"
-CONFIG_PATH="${CONFIG_PATH:-/etc/defined/dnclient.yml}"
+SERVICE_NAME="dnclient@${DN_NETWORK_NAME}.service"
+CONFIG_PATH="/etc/defined/${DN_NETWORK_NAME}/dnclient.yml"
 
 start(){
     systemctl start "$SERVICE_NAME"
@@ -223,14 +221,10 @@ enroll(){
         exit 0
     fi
 
-    # Build configOverrides array with tun.dev if DN_NETWORK_NAME is set
-    if [[ "${DN_NETWORK_NAME}" ]]; then
-        CONFIG_OVERRIDES=$(jq --compact-output --null-input \
-            --arg tundev "${DN_NETWORK_NAME}" \
-            '[{"key": "tun.dev", "value": $tundev}]')
-    else
-        CONFIG_OVERRIDES='[]'
-    fi
+    # Build configOverrides array with tun.dev
+    CONFIG_OVERRIDES=$(jq --compact-output --null-input \
+        --arg tundev "${DN_NETWORK_NAME}" \
+        '[{"key": "tun.dev", "value": $tundev}]')
 
     # Set tags
     if [[ "${DN_TAGS}" ]]; then
@@ -261,11 +255,7 @@ enroll(){
     echo "Enrollment Code: ${ENROLLMENT_CODE}"
 
     echo "Enrolling Host: $(echo "${ENROLLMENT_RESPONSE}" | jq -r .data.host.id)"
-    if [[ -n "$DN_NETWORK_NAME" ]]; then
-        dnclient enroll -name "$DN_NETWORK_NAME" -code "${ENROLLMENT_CODE}"
-    else
-        dnclient enroll -code "${ENROLLMENT_CODE}"
-    fi
+    dnclient enroll -name "$DN_NETWORK_NAME" -code "${ENROLLMENT_CODE}"
 }
 
 unenroll(){
@@ -319,9 +309,9 @@ environment variables:
     DN_API_KEY: API key for defined.net (required)
     DN_NETWORK_ID: Network ID to enroll into (required)
     DN_ROLE_ID: Role ID to assign to host (required)
-    DN_NETWORK_NAME: Network name for instantiated services. When set:
+    DN_NETWORK_NAME: Network name for instantiated services (default: defined)
         - Uses dnclient@${DN_NETWORK_NAME}.service
-        - Uses /etc/defined/${DN_NETWORK_NAME}.yml
+        - Uses /etc/defined/${DN_NETWORK_NAME}/dnclient.yml
         - Sets tun.dev interface to ${DN_NETWORK_NAME}
     DN_HOSTNAME: Base display name in defined.net admin (defaults to hostname)
     DN_CLOUD_PROVIDER: Cloud provider for instance ID (aws, gcp, azure)
