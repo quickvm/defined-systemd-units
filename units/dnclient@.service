@@ -1,0 +1,19 @@
+[Unit]
+Description=Defined Networking nebula client
+ConditionFileIsExecutable=${BIN_DIR}/dnclient
+After=network-online.target dnclient-install.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+
+ExecStart=${BIN_DIR}/dnclient run -server https://api.defined.net -name "%i"
+
+Restart=always
+StartLimitInterval=5
+StartLimitBurst=10
+RestartSec=120
+
+[Install]
+WantedBy=multi-user.target

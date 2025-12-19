@@ -54,7 +54,7 @@ if [[ -f ${BIN_DIR}/dnclient ]]; then
 
 # Install systemd service units
 export BIN_DIR=${BIN_DIR}
-install -m 0644 <(envsubst < ${UNIT_FILES}/dnclient.service) ${UNIT_DIR}/dnclient.service
+install -m 0644 <(envsubst < ${UNIT_FILES}/dnclient@.service) ${UNIT_DIR}/dnclient@.service
 install -m 0644 <(envsubst < ${UNIT_FILES}/dnctl.service) ${UNIT_DIR}/dnctl.service
 
 # Install dnctl
