@@ -116,7 +116,7 @@ fi
 # Determine service name and config path based on DN_NETWORK_NAME
 SERVICE_NAME="${DN_NETWORK_NAME:+dnclient@${DN_NETWORK_NAME}.service}"
 SERVICE_NAME="${SERVICE_NAME:-dnclient.service}"
-CONFIG_PATH="${DN_NETWORK_NAME:+/etc/defined/${DN_NETWORK_NAME}.yml}"
+CONFIG_PATH="${DN_NETWORK_NAME:+/etc/defined/${DN_NETWORK_NAME}/dnclient.yml}"
 CONFIG_PATH="${CONFIG_PATH:-/etc/defined/dnclient.yml}"
 
 start(){
@@ -184,7 +184,7 @@ enroll(){
     [[ ${DN_ROLE_ID} ]] || { echo "DN_ROLE_ID is empty! Exiting!"; exit 1; }
 
     if [[ -f "$CONFIG_PATH" ]]; then
-        echo "$CONFIG_PATH found! Is this host already enrolled? Skipping enrollment..."
+        echo "$CONFIG_PATH found! Host is already enrolled locally. Skipping enrollment..."
         exit 0
     fi
 
@@ -209,6 +209,18 @@ enroll(){
         else
             echo "Warning: Failed to get instance ID from ${DN_CLOUD_PROVIDER}" >&2
         fi
+    fi
+
+    # Check if host with this name is already enrolled in defined.net
+    echo "Checking if host '${ENROLLMENT_HOSTNAME}' is already enrolled..."
+    EXISTING_HOST=$(curl -H user-agent:defined-systemd-units -s -L \
+        "https://api.defined.net/v1/hosts?networkID=${DN_NETWORK_ID}&name=${ENROLLMENT_HOSTNAME}" \
+        -H "Accept: application/json" \
+        -H "Authorization: Bearer ${DN_API_KEY}" | jq -r '.data[0].id // empty')
+
+    if [[ -n "${EXISTING_HOST}" ]]; then
+        echo "Host '${ENROLLMENT_HOSTNAME}' is already enrolled in defined.net (ID: ${EXISTING_HOST}). Skipping enrollment..."
+        exit 0
     fi
 
     # Build configOverrides array with tun.dev if DN_NETWORK_NAME is set
