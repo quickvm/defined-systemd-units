@@ -12,11 +12,13 @@ set -e
 : ${DN_IP_ADDRESS:-}
 : ${DN_SKIP_UNENROLL:="false"}
 : ${DN_MIRROR_IP:="false"}
-: ${DN_NAME:-}
+: ${DN_NETWORK_NAME:=defined}
+: ${DN_HOSTNAME:-}
+: ${DN_CLOUD_PROVIDER:-}
 
 # Load variables from /etc/defined/dnctl if it exists
 if [[ -f /etc/defined/dnctl ]]; then
-    export $(grep -v '^#' /etc/defined/dnctl | xargs)
+    source /etc/defined/dnctl
 fi
 
 if [[ "${DN_MIRROR_IP}" == "true" ]]; then
@@ -31,6 +33,45 @@ export DN_IP_ADDRESS="${DN_NETWORK_CIDR}.${LAST_OCTET}"
         echo "DN_IP_ADDRESS=${DN_IP_ADDRESS}" >> /etc/defined/dnctl
     fi
 fi
+
+# Fetch cloud instance ID based on provider
+get_instance_id(){
+    local provider="$1"
+    local instance_id=""
+
+    case "${provider}" in
+        aws)
+            # AWS IMDSv2 - get token first, then instance ID
+            local token
+            token=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+                -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" \
+                --connect-timeout 2 2>/dev/null) || return 1
+            instance_id=$(curl -s -H "X-aws-ec2-metadata-token: ${token}" \
+                "http://169.254.169.254/latest/meta-data/instance-id" \
+                --connect-timeout 2 2>/dev/null) || return 1
+            # Strip "i-" prefix
+            echo "${instance_id#i-}"
+            ;;
+        gcp)
+            # GCP metadata endpoint
+            instance_id=$(curl -s -H "Metadata-Flavor: Google" \
+                "http://metadata.google.internal/computeMetadata/v1/instance/id" \
+                --connect-timeout 2 2>/dev/null) || return 1
+            echo "${instance_id}"
+            ;;
+        azure)
+            # Azure IMDS endpoint - use first segment of UUID
+            instance_id=$(curl -s -H "Metadata: true" \
+                "http://169.254.169.254/metadata/instance/compute/vmId?api-version=2021-02-01&format=text" \
+                --connect-timeout 2 2>/dev/null) || return 1
+            echo "${instance_id%%-*}"
+            ;;
+        *)
+            echo "Unknown cloud provider: ${provider}" >&2
+            return 1
+            ;;
+    esac
+}
 
 install_dnclient(){
 OS_ARCH=$(arch)
@@ -72,49 +113,64 @@ else
 fi
 }
 
+# Determine service name and config path based on DN_NETWORK_NAME
+SERVICE_NAME="dnclient@${DN_NETWORK_NAME}.service"
+CONFIG_PATH="/etc/defined/${DN_NETWORK_NAME}/dnclient.yml"
+
 start(){
-    systemctl start dnclient.service
+    systemctl start "$SERVICE_NAME"
 }
 
 stop(){
-    systemctl stop dnclient.service
+    systemctl stop "$SERVICE_NAME"
 }
 
 restart(){
-    systemctl restart dnclient.service
+    systemctl restart "$SERVICE_NAME"
 }
 
 enable(){
-    systemctl enable dnclient.service
-    systemctl enable dnclient-enroll.service
+    systemctl enable "$SERVICE_NAME"
 }
 
 write_config(){
     if [[ -f /etc/defined/dnctl ]]; then
         echo "The file /etc/defined/dnctl exists! Delete it to write a new dnctl configuration file."
+        return 1
     fi
-    
+
     cat << EOF > /etc/defined/dnctl
 DN_API_KEY=${DN_API_KEY}
 DN_NETWORK_ID=${DN_NETWORK_ID}
 DN_ROLE_ID=${DN_ROLE_ID}
 DN_SKIP_UNENROLL=${DN_SKIP_UNENROLL}
 EOF
-    
+
     if [[ "${DN_IP_ADDRESS}" ]]; then
         cat << EOF >> /etc/defined/dnctl
 DN_IP_ADDRESS=${DN_IP_ADDRESS}
 EOF
     fi
-    
-    if [[ "${DN_NAME}" ]]; then
+
+    if [[ "${DN_NETWORK_NAME}" ]]; then
         cat << EOF >> /etc/defined/dnctl
-DN_NAME="${DN_NAME}"
+DN_NETWORK_NAME=${DN_NETWORK_NAME}
 EOF
     fi
-    
-    chmod 0640 /etc/defined/dnctl
 
+    if [[ "${DN_HOSTNAME}" ]]; then
+        cat << EOF >> /etc/defined/dnctl
+DN_HOSTNAME=${DN_HOSTNAME}
+EOF
+    fi
+
+    if [[ "${DN_CLOUD_PROVIDER}" ]]; then
+        cat << EOF >> /etc/defined/dnctl
+DN_CLOUD_PROVIDER=${DN_CLOUD_PROVIDER}
+EOF
+    fi
+
+    chmod 0640 /etc/defined/dnctl
 }
 
 enroll(){
@@ -125,14 +181,8 @@ enroll(){
     [[ ${DN_NETWORK_ID} ]] || { echo "DN_NETWORK_ID is empty! Exiting!"; exit 1; }
     [[ ${DN_ROLE_ID} ]] || { echo "DN_ROLE_ID is empty! Exiting!"; exit 1; }
 
-    # Determine config path and service name based on DN_NAME
-    CONFIG_PATH="${DN_NAME:+/etc/defined/${DN_NAME}.yml}"
-    CONFIG_PATH="${CONFIG_PATH:-/etc/defined/dnclient.yml}"
-    SERVICE_NAME="${DN_NAME:+dnclient@${DN_NAME}.service}"
-    SERVICE_NAME="${SERVICE_NAME:-dnclient.service}"
-
     if [[ -f "$CONFIG_PATH" ]]; then
-        echo "$CONFIG_PATH found! Is this host already enrolled? Skipping enrollment..."
+        echo "$CONFIG_PATH found! Host is already enrolled locally. Skipping enrollment..."
         exit 0
     fi
 
@@ -140,59 +190,77 @@ enroll(){
         echo "$SERVICE_NAME is not running! Exiting!"
         exit 1
     fi
-    
-    if [[ "${DN_NAME}" ]]; then
-        DN_ENROLLMENT_NAME="${DN_NAME}"
+
+    # Build enrollment hostname
+    # Start with DN_HOSTNAME or system hostname
+    if [[ "${DN_HOSTNAME}" ]]; then
+        ENROLLMENT_HOSTNAME="${DN_HOSTNAME}"
     else
-        DN_ENROLLMENT_NAME="$(hostname)"
+        ENROLLMENT_HOSTNAME="$(hostname)"
     fi
-    
-    if [[ "${DN_IP_ADDRESS}" ]]; then
-        ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID, "tags": $tags, "ipAddress": $ipAddress}'
-    else
-        ENROLLMENT_JSON='{"name": $name, "networkID": $networkID, "roleID": $roleID, "tags": $tags}'
+
+    # Append cloud instance ID if DN_CLOUD_PROVIDER is set
+    if [[ "${DN_CLOUD_PROVIDER}" ]]; then
+        INSTANCE_ID=$(get_instance_id "${DN_CLOUD_PROVIDER}")
+        if [[ -n "${INSTANCE_ID}" ]]; then
+            ENROLLMENT_HOSTNAME="${ENROLLMENT_HOSTNAME}-${INSTANCE_ID}"
+        else
+            echo "Warning: Failed to get instance ID from ${DN_CLOUD_PROVIDER}" >&2
+        fi
     fi
-    
+
+    # Check if host with this name is already enrolled in defined.net
+    echo "Checking if host '${ENROLLMENT_HOSTNAME}' is already enrolled..."
+    EXISTING_HOST=$(curl -H user-agent:defined-systemd-units -s -L \
+        "https://api.defined.net/v1/hosts?networkID=${DN_NETWORK_ID}&name=${ENROLLMENT_HOSTNAME}" \
+        -H "Accept: application/json" \
+        -H "Authorization: Bearer ${DN_API_KEY}" | jq -r '.data[0].id // empty')
+
+    if [[ -n "${EXISTING_HOST}" ]]; then
+        echo "Host '${ENROLLMENT_HOSTNAME}' is already enrolled in defined.net (ID: ${EXISTING_HOST}). Skipping enrollment..."
+        exit 0
+    fi
+
+    # Build configOverrides array with tun.dev
+    CONFIG_OVERRIDES=$(jq --compact-output --null-input \
+        --arg tundev "${DN_NETWORK_NAME}" \
+        '[{"key": "tun.dev", "value": $tundev}]')
+
+    # Set tags
     if [[ "${DN_TAGS}" ]]; then
         DN_TAG_LIST="${DN_TAGS}"
     else
         DN_TAG_LIST='[]'
     fi
-    
+
+    # Build enrollment JSON
     ENROLLMENT_DATA=$(jq --compact-output --null-input \
-        --arg name "${DN_ENROLLMENT_NAME}" \
+        --arg name "${ENROLLMENT_HOSTNAME}" \
         --arg networkID "${DN_NETWORK_ID}" \
         --arg roleID "${DN_ROLE_ID}" \
         --arg ipAddress "${DN_IP_ADDRESS}" \
         --argjson tags "${DN_TAG_LIST}" \
-        "${ENROLLMENT_JSON}")
+        --argjson configOverrides "${CONFIG_OVERRIDES}" \
+        '{name: $name, networkID: $networkID, roleID: $roleID, tags: $tags, configOverrides: $configOverrides} + (if $ipAddress != "" then {ipAddress: $ipAddress} else {} end)')
     echo "Enrollment Data: ${ENROLLMENT_DATA}"
-    
+
     ENROLLMENT_RESPONSE=$(curl -H user-agent:defined-systemd-units -s -L -X POST 'https://api.defined.net/v1/host-and-enrollment-code' \
     -H 'Content-Type: application/json' \
     -H 'Accept: application/json' \
     -H "Authorization: Bearer ${DN_API_KEY}" \
-    --data-raw ${ENROLLMENT_DATA})
+    --data-raw "${ENROLLMENT_DATA}")
     echo "Enrollment Response: ${ENROLLMENT_RESPONSE}"
-    
-    ENROLLMENT_CODE=$(echo ${ENROLLMENT_RESPONSE} | jq -r .data.enrollmentCode.code)
+
+    ENROLLMENT_CODE=$(echo "${ENROLLMENT_RESPONSE}" | jq -r .data.enrollmentCode.code)
     echo "Enrollment Code: ${ENROLLMENT_CODE}"
-    
-    echo "Enrolling Host: $(echo ${ENROLLMENT_RESPONSE} | jq -r .data.host.id)"
-    if [[ -n "$DN_NAME" ]]; then
-        dnclient enroll -name "$DN_NAME" -code "${ENROLLMENT_CODE}"
-    else
-        dnclient enroll -code "${ENROLLMENT_CODE}"
-    fi
+
+    echo "Enrolling Host: $(echo "${ENROLLMENT_RESPONSE}" | jq -r .data.host.id)"
+    dnclient enroll -name "$DN_NETWORK_NAME" -code "${ENROLLMENT_CODE}"
 }
 
 unenroll(){
     [[ -v DN_API_KEY ]] || { echo "DN_API_KEY is unset! Exiting!"; exit 1; }
     [[ ${DN_API_KEY} ]] || { echo "DN_API_KEY is empty! Exiting!"; exit 1; }
-
-    # Determine config path based on DN_NAME
-    CONFIG_PATH="${DN_NAME:+/etc/defined/${DN_NAME}.yml}"
-    CONFIG_PATH="${CONFIG_PATH:-/etc/defined/dnclient.yml}"
 
     if [[ "${DN_SKIP_UNENROLL}" == "true" ]]; then
         echo "DN_SKIP_UNENROLL set to true. Skipping unenroll!"
@@ -227,23 +295,31 @@ usage: dnctl command
 
 commands:
     install: Download and install dnclient to /usr/local/bin
-    start: Start dnclient.service
-    stop: Stop dnclient.service
-    restart: Restart dnclient.service
-    enable: Enable dnclient.service and dnclient-enroll.service
-    write_config: Read the shell environment for:
-        DN_API_KEY, DN_NETWORK_ID, DN_ROLE_ID, DN_NAME (optional),
-        DN_TAGS (optional), and DN_IP_ADDRESS (optional)
-        and write them to /etc/defined/dnctl
+    start: Start dnclient service
+    stop: Stop dnclient service
+    restart: Restart dnclient service
+    enable: Enable dnclient service
+    write_config: Write environment variables to /etc/defined/dnctl
     enroll: Enroll the host into defined.net
     unenroll: Unenroll the host from defined.net
     reenroll: Unenroll and Enroll the host
     help: Show this message
 
 environment variables:
-    DN_NAME: Network name for instantiated services. When set, uses
-        dnclient@${DN_NAME}.service and /etc/defined/${DN_NAME}.yml
-        instead of dnclient.service and /etc/defined/dnclient.yml
+    DN_API_KEY: API key for defined.net (required)
+    DN_NETWORK_ID: Network ID to enroll into (required)
+    DN_ROLE_ID: Role ID to assign to host (required)
+    DN_NETWORK_NAME: Network name for instantiated services (default: defined)
+        - Uses dnclient@${DN_NETWORK_NAME}.service
+        - Uses /etc/defined/${DN_NETWORK_NAME}/dnclient.yml
+        - Sets tun.dev interface to ${DN_NETWORK_NAME}
+    DN_HOSTNAME: Base display name in defined.net admin (defaults to hostname)
+    DN_CLOUD_PROVIDER: Cloud provider for instance ID (aws, gcp, azure)
+        When set, appends instance ID to hostname for unique names
+        Example: host + i-093adcbbbee1cbbb1 = host-093adcbbbee1cbbb1
+    DN_IP_ADDRESS: Static IP address for the host (optional)
+    DN_TAGS: JSON array of tags, e.g. '["role:server","env:prod"]'
+    DN_SKIP_UNENROLL: Set to "true" to skip unenrollment on stop
 
 EOF
 }
