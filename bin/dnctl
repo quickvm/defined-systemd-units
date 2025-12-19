@@ -16,7 +16,7 @@ set -e
 
 # Load variables from /etc/defined/dnctl if it exists
 if [[ -f /etc/defined/dnctl ]]; then
-    export $(grep -v '^#' /etc/defined/dnctl | xargs)
+    source /etc/defined/dnctl
 fi
 
 if [[ "${DN_MIRROR_IP}" == "true" ]]; then
