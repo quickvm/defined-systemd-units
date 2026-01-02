@@ -15,6 +15,10 @@ set -e
 : ${DN_NETWORK_NAME:=defined}
 : ${DN_HOSTNAME:-}
 : ${DN_CLOUD_PROVIDER:-}
+: ${DN_STATIC_ADDRESSES:-}
+: ${DN_LISTEN_PORT:-}
+: ${DN_IS_LIGHTHOUSE:="false"}
+: ${DN_IS_RELAY:="false"}
 
 # Load variables from /etc/defined/dnctl if it exists
 if [[ -f /etc/defined/dnctl ]]; then
@@ -170,6 +174,30 @@ DN_CLOUD_PROVIDER=${DN_CLOUD_PROVIDER}
 EOF
     fi
 
+    if [[ "${DN_STATIC_ADDRESSES}" ]]; then
+        cat << EOF >> /etc/defined/dnctl
+DN_STATIC_ADDRESSES='${DN_STATIC_ADDRESSES}'
+EOF
+    fi
+
+    if [[ "${DN_LISTEN_PORT}" ]]; then
+        cat << EOF >> /etc/defined/dnctl
+DN_LISTEN_PORT=${DN_LISTEN_PORT}
+EOF
+    fi
+
+    if [[ "${DN_IS_LIGHTHOUSE}" == "true" ]]; then
+        cat << EOF >> /etc/defined/dnctl
+DN_IS_LIGHTHOUSE=${DN_IS_LIGHTHOUSE}
+EOF
+    fi
+
+    if [[ "${DN_IS_RELAY}" == "true" ]]; then
+        cat << EOF >> /etc/defined/dnctl
+DN_IS_RELAY=${DN_IS_RELAY}
+EOF
+    fi
+
     chmod 0640 /etc/defined/dnctl
 }
 
@@ -180,6 +208,26 @@ enroll(){
     [[ ${DN_API_KEY} ]] || { echo "DN_API_KEY is empty! Exiting!"; exit 1; }
     [[ ${DN_NETWORK_ID} ]] || { echo "DN_NETWORK_ID is empty! Exiting!"; exit 1; }
     [[ ${DN_ROLE_ID} ]] || { echo "DN_ROLE_ID is empty! Exiting!"; exit 1; }
+
+    # Validate lighthouse/relay mutual exclusion
+    if [[ "${DN_IS_LIGHTHOUSE}" == "true" && "${DN_IS_RELAY}" == "true" ]]; then
+        echo "DN_IS_LIGHTHOUSE and DN_IS_RELAY cannot both be true! Exiting!"
+        exit 1
+    fi
+
+    # Validate lighthouse requires staticAddresses
+    if [[ "${DN_IS_LIGHTHOUSE}" == "true" && -z "${DN_STATIC_ADDRESSES}" ]]; then
+        echo "DN_STATIC_ADDRESSES is required when DN_IS_LIGHTHOUSE is true! Exiting!"
+        exit 1
+    fi
+
+    # Validate lighthouse/relay requires listenPort
+    if [[ "${DN_IS_LIGHTHOUSE}" == "true" || "${DN_IS_RELAY}" == "true" ]]; then
+        if [[ -z "${DN_LISTEN_PORT}" || "${DN_LISTEN_PORT}" == "0" ]]; then
+            echo "DN_LISTEN_PORT must be a non-zero port for lighthouses and relays! Exiting!"
+            exit 1
+        fi
+    fi
 
     if [[ -f "$CONFIG_PATH" ]]; then
         echo "$CONFIG_PATH found! Host is already enrolled locally. Skipping enrollment..."
@@ -233,15 +281,47 @@ enroll(){
         DN_TAG_LIST='[]'
     fi
 
+    # Set staticAddresses for lighthouse enrollment
+    if [[ "${DN_STATIC_ADDRESSES}" ]]; then
+        DN_STATIC_ADDRESSES_LIST="${DN_STATIC_ADDRESSES}"
+    else
+        DN_STATIC_ADDRESSES_LIST='[]'
+    fi
+
+    # Set listenPort (default 0 lets the system choose)
+    if [[ "${DN_LISTEN_PORT}" ]]; then
+        LISTEN_PORT="${DN_LISTEN_PORT}"
+    else
+        LISTEN_PORT=0
+    fi
+
+    # Set isLighthouse boolean
+    if [[ "${DN_IS_LIGHTHOUSE}" == "true" ]]; then
+        IS_LIGHTHOUSE="true"
+    else
+        IS_LIGHTHOUSE="false"
+    fi
+
+    # Set isRelay boolean
+    if [[ "${DN_IS_RELAY}" == "true" ]]; then
+        IS_RELAY="true"
+    else
+        IS_RELAY="false"
+    fi
+
     # Build enrollment JSON
     ENROLLMENT_DATA=$(jq --compact-output --null-input \
         --arg name "${ENROLLMENT_HOSTNAME}" \
         --arg networkID "${DN_NETWORK_ID}" \
         --arg roleID "${DN_ROLE_ID}" \
         --arg ipAddress "${DN_IP_ADDRESS}" \
+        --argjson listenPort "${LISTEN_PORT}" \
+        --argjson isLighthouse "${IS_LIGHTHOUSE}" \
+        --argjson isRelay "${IS_RELAY}" \
         --argjson tags "${DN_TAG_LIST}" \
+        --argjson staticAddresses "${DN_STATIC_ADDRESSES_LIST}" \
         --argjson configOverrides "${CONFIG_OVERRIDES}" \
-        '{name: $name, networkID: $networkID, roleID: $roleID, tags: $tags, configOverrides: $configOverrides} + (if $ipAddress != "" then {ipAddress: $ipAddress} else {} end)')
+        '{name: $name, networkID: $networkID, roleID: $roleID, listenPort: $listenPort, isLighthouse: $isLighthouse, isRelay: $isRelay, tags: $tags, configOverrides: $configOverrides} + (if $ipAddress != "" then {ipAddress: $ipAddress} else {} end) + (if ($staticAddresses | length) > 0 then {staticAddresses: $staticAddresses} else {} end)')
     echo "Enrollment Data: ${ENROLLMENT_DATA}"
 
     ENROLLMENT_RESPONSE=$(curl -H user-agent:defined-systemd-units -s -L -X POST 'https://api.defined.net/v1/host-and-enrollment-code' \
@@ -320,6 +400,19 @@ environment variables:
     DN_IP_ADDRESS: Static IP address for the host (optional)
     DN_TAGS: JSON array of tags, e.g. '["role:server","env:prod"]'
     DN_SKIP_UNENROLL: Set to "true" to skip unenrollment on stop
+
+lighthouse/relay enrollment:
+    DN_IS_LIGHTHOUSE: Set to "true" to enroll as a lighthouse
+        Requires DN_STATIC_ADDRESSES and DN_LISTEN_PORT
+        Cannot be used with DN_IS_RELAY
+    DN_IS_RELAY: Set to "true" to enroll as a relay
+        Requires DN_LISTEN_PORT
+        Cannot be used with DN_IS_LIGHTHOUSE
+    DN_STATIC_ADDRESSES: JSON array of public IP:port for lighthouse discovery
+        Example: '["84.123.10.1:4242"]' or '["84.123.10.1:4242","[2001:db8::1]:4242"]'
+        Required when DN_IS_LIGHTHOUSE is true
+    DN_LISTEN_PORT: UDP port for the host to listen on (0 = auto-select)
+        Required non-zero value for lighthouses and relays
 
 EOF
 }
