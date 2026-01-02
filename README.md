@@ -54,9 +54,27 @@ DN_SKIP_UNENROLL=true # Optional. If set to true the host will not unenroll on r
 DN_IP_ADDRESS=100.100.0.10 # Optional. If set to an IP in your defined.net network CIDR range it will enroll the host with that IP address.
 DN_HOSTNAME="my-custom-name" # Optional. Base display name in defined.net admin. Defaults to hostname.
 DN_TAGS='["http:allow","foo:bar"]' # Optional. JSON formatted array of tags to add to a host. Defaults to []
+DN_NETWORK_NAME=defined # Optional. Network name for instantiated services. Defaults to "defined".
 ```
 
 Note: `DN_SKIP_UNENROLL=true` should only be used on hosts that you want to stay enrolled over a long period of time. If you set `DN_SKIP_UNENROLL` on servers that are ephemeral in nature you will end up with a bunch of enrolled hosts that you will manually have to clean up at some point. Set `DN_SKIP_UNENROLL=true` with care!
+
+### Cloud Provider Support
+
+When running on AWS, GCP, or Azure, you can use `DN_CLOUD_PROVIDER` to automatically append the instance ID to the hostname. This is useful for auto-scaling groups or other environments where you need unique hostnames.
+
+```bash
+DN_CLOUD_PROVIDER=aws # Supported values: aws, gcp, azure
+DN_HOSTNAME=webserver # Optional base hostname
+```
+
+When `DN_CLOUD_PROVIDER` is set, dnctl will query the cloud provider's metadata service to fetch the instance ID and append it to the hostname:
+
+| Provider | Metadata Source | Example Hostname |
+|----------|-----------------|------------------|
+| `aws` | EC2 IMDSv2 instance-id (strips `i-` prefix) | `webserver-093adcbbbee1cbbb1` |
+| `gcp` | Compute Engine instance ID | `webserver-1234567890123456789` |
+| `azure` | IMDS vmId (first UUID segment) | `webserver-a1b2c3d4` |
 
 ### Lighthouse and Relay Enrollment
 
