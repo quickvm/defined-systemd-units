@@ -47,21 +47,56 @@ You will need to collect a few bits of information from [defined.net](https://ad
 Once you have the above information you will want to save these as key value pairs in `/etc/defined/dnctl`.
 
 ```bash
-DN_API_key=dnkey-AEMEIG2EITHATEI8WEEL1UBEE2-EI3WUOVEEN3AHV9OV1OHROO8ZEI3GESHIE2ICH3JI4FIQUOH5FUO # Required. The API key used to enroll the host.
+DN_API_KEY=dnkey-AEMEIG2EITHATEI8WEEL1UBEE2-EI3WUOVEEN3AHV9OV1OHROO8ZEI3GESHIE2ICH3JI4FIQUOH5FUO # Required. The API key used to enroll the host.
 DN_NETWORK_ID=network-MAI8WU2YAHN5THEESOOKEE7NAH # Required. The network that the host will enroll into.
 DN_ROLE_ID=role-AICHING2OHGHEI9QUEIZOO7EIZ # Required. The role that the host will enroll into.
 DN_SKIP_UNENROLL=true # Optional. If set to true the host will not unenroll on reboot or shut down. Defaults to false.
 DN_IP_ADDRESS=100.100.0.10 # Optional. If set to an IP in your defined.net network CIDR range it will enroll the host with that IP address.
-DN_NAME="my-custom-name-$(hostname)" # Optional. You can customize the name you give your host in defined.net. Defaults to dsu-$(hostname)
+DN_HOSTNAME="my-custom-name" # Optional. Base display name in defined.net admin. Defaults to hostname.
 DN_TAGS='["http:allow","foo:bar"]' # Optional. JSON formatted array of tags to add to a host. Defaults to []
+DN_NETWORK_NAME=defined # Optional. Network name for instantiated services. Defaults to "defined".
 ```
 
 Note: `DN_SKIP_UNENROLL=true` should only be used on hosts that you want to stay enrolled over a long period of time. If you set `DN_SKIP_UNENROLL` on servers that are ephemeral in nature you will end up with a bunch of enrolled hosts that you will manually have to clean up at some point. Set `DN_SKIP_UNENROLL=true` with care!
 
+### Cloud Provider Support
+
+When running on AWS, GCP, or Azure, you can use `DN_CLOUD_PROVIDER` to automatically append the instance ID to the hostname. This is useful for auto-scaling groups or other environments where you need unique hostnames.
+
+```bash
+DN_CLOUD_PROVIDER=aws # Supported values: aws, gcp, azure
+DN_HOSTNAME=webserver # Optional base hostname
+```
+
+When `DN_CLOUD_PROVIDER` is set, dnctl will query the cloud provider's metadata service to fetch the instance ID and append it to the hostname:
+
+| Provider | Metadata Source | Example Hostname |
+|----------|-----------------|------------------|
+| `aws` | EC2 IMDSv2 instance-id (strips `i-` prefix) | `webserver-093adcbbbee1cbbb1` |
+| `gcp` | Compute Engine instance ID | `webserver-1234567890123456789` |
+| `azure` | IMDS vmId (first UUID segment) | `webserver-a1b2c3d4` |
+
+### Lighthouse and Relay Enrollment
+
+To enroll a host as a [lighthouse](https://docs.defined.net/glossary/lighthouse/) or relay, add the following variables to `/etc/defined/dnctl`:
+
+```bash
+# Lighthouse enrollment
+DN_IS_LIGHTHOUSE=true # Set to "true" to enroll as a lighthouse. Cannot be used with DN_IS_RELAY.
+DN_STATIC_ADDRESSES='["84.123.10.1:4242"]' # Required for lighthouses. JSON array of public IP:port addresses.
+DN_LISTEN_PORT=4242 # Required non-zero value for lighthouses and relays.
+
+# Relay enrollment
+DN_IS_RELAY=true # Set to "true" to enroll as a relay. Cannot be used with DN_IS_LIGHTHOUSE.
+DN_LISTEN_PORT=4242 # Required non-zero value for lighthouses and relays.
+```
+
+Note: A host cannot be both a lighthouse and a relay. Lighthouses require at least one static address and a non-zero listen port. Relays require a non-zero listen port.
+
 Optionally you can export them to your shell environment as the `root` user:
 
 ```bash
-export DN_API_key=dnkey-AEMEIG2EITHATEI8WEEL1UBEE2-EI3WUOVEEN3AHV9OV1OHROO8ZEI3GESHIE2ICH3JI4FIQUOH5FUO
+export DN_API_KEY=dnkey-AEMEIG2EITHATEI8WEEL1UBEE2-EI3WUOVEEN3AHV9OV1OHROO8ZEI3GESHIE2ICH3JI4FIQUOH5FUO
 export DN_NETWORK_ID=network-MAI8WU2YAHN5THEESOOKEE7NAH
 export DN_ROLE_ID=role-AICHING2OHGHEI9QUEIZOO7EIZ
 ```
