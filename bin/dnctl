@@ -56,6 +56,23 @@ is_rebooting(){
     return 1
 }
 
+# Detect if system is shutting down (poweroff, halt, or reboot)
+is_shutting_down(){
+    # Check if systemd is stopping
+    local state
+    state=$(systemctl is-system-running 2>/dev/null || true)
+    if [[ "$state" == "stopping" ]]; then
+        return 0
+    fi
+
+    # Check systemd job queue for shutdown targets
+    if systemctl list-jobs 2>/dev/null | grep -qE '(shutdown|poweroff|halt|reboot|final)\.target'; then
+        return 0
+    fi
+
+    return 1
+}
+
 # Fetch cloud instance ID based on provider
 get_instance_id(){
     local provider="$1"
@@ -387,14 +404,23 @@ unenroll(){
     -H "Accept: application/json" \
     -H "Authorization: Bearer ${DN_API_KEY}"
 
-    # Stop dnclient, remove config directory, and restart to fully clear state
+    # Remove config directory to fully clear state
     CONFIG_DIR="/etc/defined/${DN_NETWORK_NAME}"
-    echo "Stopping ${SERVICE_NAME}..."
-    systemctl stop "$SERVICE_NAME" || true
-    echo "Removing config directory: ${CONFIG_DIR}"
-    rm -rf "$CONFIG_DIR"
-    echo "Starting ${SERVICE_NAME}..."
-    systemctl start "$SERVICE_NAME" || true
+
+    # During shutdown, systemd is already stopping services - don't try to stop/start
+    # as it causes deadlocks. Just remove the config.
+    if is_shutting_down; then
+        echo "System is shutting down. Removing config directory: ${CONFIG_DIR}"
+        rm -rf "$CONFIG_DIR"
+    else
+        # Normal unenroll (manual): stop service, remove config, restart
+        echo "Stopping ${SERVICE_NAME}..."
+        systemctl stop "$SERVICE_NAME" || true
+        echo "Removing config directory: ${CONFIG_DIR}"
+        rm -rf "$CONFIG_DIR"
+        echo "Starting ${SERVICE_NAME}..."
+        systemctl start "$SERVICE_NAME" || true
+    fi
 }
 
 reenroll(){
