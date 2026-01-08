@@ -50,12 +50,34 @@ Once you have the above information you will want to save these as key value pai
 DN_API_KEY=dnkey-AEMEIG2EITHATEI8WEEL1UBEE2-EI3WUOVEEN3AHV9OV1OHROO8ZEI3GESHIE2ICH3JI4FIQUOH5FUO # Required. The API key used to enroll the host.
 DN_NETWORK_ID=network-MAI8WU2YAHN5THEESOOKEE7NAH # Required. The network that the host will enroll into.
 DN_ROLE_ID=role-AICHING2OHGHEI9QUEIZOO7EIZ # Required. The role that the host will enroll into.
-DN_SKIP_UNENROLL=true # Optional. If set to true the host will not unenroll on reboot or shut down. Defaults to false.
+DN_SKIP_UNENROLL=true # Optional. If set to true the host will never unenroll. Defaults to false.
+DN_UNENROLL_ON_REBOOT=false # Optional. If set to true the host will unenroll on reboot. Defaults to false.
 DN_IP_ADDRESS=100.100.0.10 # Optional. If set to an IP in your defined.net network CIDR range it will enroll the host with that IP address.
 DN_HOSTNAME="my-custom-name" # Optional. Base display name in defined.net admin. Defaults to hostname.
 DN_TAGS='["http:allow","foo:bar"]' # Optional. JSON formatted array of tags to add to a host. Defaults to []
 DN_NETWORK_NAME=defined # Optional. Network name for instantiated services. Defaults to "defined".
 ```
+
+### Shutdown vs Reboot Behavior
+
+By default, dnctl differentiates between a system shutdown and a reboot:
+
+| Scenario | Default Behavior |
+|----------|------------------|
+| System shutdown (poweroff) | Host is unenrolled |
+| System reboot | Host stays enrolled |
+| `DN_SKIP_UNENROLL=true` | Host never unenrolls |
+| `DN_UNENROLL_ON_REBOOT=true` | Host unenrolls on reboot too |
+
+This is useful for auto-scaling groups (ASG) where terminated instances should be unenrolled, but hosts rebooting for updates should remain enrolled.
+
+During unenrollment, dnctl performs a full cleanup:
+1. Deletes the host from defined.net via API
+2. Stops the `dnclient@<network>.service`
+3. Removes the config directory (`/etc/defined/<network>/`)
+4. Restarts the `dnclient@<network>.service`
+
+This ensures the host is fully cleared from defined.net's system.
 
 Note: `DN_SKIP_UNENROLL=true` should only be used on hosts that you want to stay enrolled over a long period of time. If you set `DN_SKIP_UNENROLL` on servers that are ephemeral in nature you will end up with a bunch of enrolled hosts that you will manually have to clean up at some point. Set `DN_SKIP_UNENROLL=true` with care!
 

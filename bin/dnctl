@@ -19,6 +19,7 @@ set -e
 : ${DN_LISTEN_PORT:-}
 : ${DN_IS_LIGHTHOUSE:="false"}
 : ${DN_IS_RELAY:="false"}
+: ${DN_UNENROLL_ON_REBOOT:="false"}
 
 # Load variables from /etc/defined/dnctl if it exists
 if [[ -f /etc/defined/dnctl ]]; then
@@ -37,6 +38,23 @@ export DN_IP_ADDRESS="${DN_NETWORK_CIDR}.${LAST_OCTET}"
         echo "DN_IP_ADDRESS=${DN_IP_ADDRESS}" >> /etc/defined/dnctl
     fi
 fi
+
+# Detect if system is rebooting (vs shutting down)
+is_rebooting(){
+    # Method 1: Check systemd job queue for reboot.target
+    if systemctl list-jobs 2>/dev/null | grep -q 'reboot.target'; then
+        return 0
+    fi
+
+    # Method 2: Check scheduled shutdown file
+    if [[ -f /run/systemd/shutdown/scheduled ]]; then
+        if grep -q '^MODE=reboot' /run/systemd/shutdown/scheduled; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
 
 # Fetch cloud instance ID based on provider
 get_instance_id(){
@@ -148,6 +166,7 @@ DN_API_KEY=${DN_API_KEY}
 DN_NETWORK_ID=${DN_NETWORK_ID}
 DN_ROLE_ID=${DN_ROLE_ID}
 DN_SKIP_UNENROLL=${DN_SKIP_UNENROLL}
+DN_UNENROLL_ON_REBOOT=${DN_UNENROLL_ON_REBOOT}
 EOF
 
     if [[ "${DN_IP_ADDRESS}" ]]; then
@@ -347,6 +366,15 @@ unenroll(){
         exit 0
     fi
 
+    # Skip unenrollment on reboot unless explicitly configured to unenroll
+    if is_rebooting; then
+        if [[ "${DN_UNENROLL_ON_REBOOT}" != "true" ]]; then
+            echo "System is rebooting. Skipping unenroll (set DN_UNENROLL_ON_REBOOT=true to override)."
+            exit 0
+        fi
+        echo "System is rebooting but DN_UNENROLL_ON_REBOOT=true. Proceeding with unenroll..."
+    fi
+
     if [[ -f "$CONFIG_PATH" ]]; then
         DN_HOST_ID=$(grep -F host_id "$CONFIG_PATH" | awk '{ print $2 }' | head -1 )
     else
@@ -358,7 +386,15 @@ unenroll(){
     curl -H user-agent:defined-systemd-units -sSL -X DELETE "https://api.defined.net/v1/hosts/${DN_HOST_ID}" \
     -H "Accept: application/json" \
     -H "Authorization: Bearer ${DN_API_KEY}"
-    rm -f "$CONFIG_PATH"
+
+    # Stop dnclient, remove config directory, and restart to fully clear state
+    CONFIG_DIR="/etc/defined/${DN_NETWORK_NAME}"
+    echo "Stopping ${SERVICE_NAME}..."
+    systemctl stop "$SERVICE_NAME" || true
+    echo "Removing config directory: ${CONFIG_DIR}"
+    rm -rf "$CONFIG_DIR"
+    echo "Starting ${SERVICE_NAME}..."
+    systemctl start "$SERVICE_NAME" || true
 }
 
 reenroll(){
@@ -400,6 +436,8 @@ environment variables:
     DN_IP_ADDRESS: Static IP address for the host (optional)
     DN_TAGS: JSON array of tags, e.g. '["role:server","env:prod"]'
     DN_SKIP_UNENROLL: Set to "true" to skip unenrollment on stop
+    DN_UNENROLL_ON_REBOOT: Set to "true" to unenroll even on reboot (default: false)
+        By default, hosts are preserved during reboot and only unenrolled on shutdown
 
 lighthouse/relay enrollment:
     DN_IS_LIGHTHOUSE: Set to "true" to enroll as a lighthouse
