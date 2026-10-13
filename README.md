@@ -41,6 +41,7 @@ You will need to collect a few bits of information from [defined.net](https://ad
     * hosts:create
     * hosts:delete
     * hosts:enroll
+    * hosts:list (lets `dnctl enroll` find a host that is already enrolled)
 1. A Network ID. Your `networkID`. It can be found in the top left section of the menu in the admin panel.
 1. A [Role](https://docs.defined.net/guides/creating-firewalls-using-roles/#creating-roles) ID
 
@@ -74,7 +75,7 @@ This is useful for auto-scaling groups (ASG) where terminated instances should b
 During unenrollment, dnctl performs a full cleanup:
 1. Deletes the host from defined.net via API
 2. Stops the `dnclient@<network>.service`
-3. Removes the config directory (`/etc/defined/<network>/`)
+3. Removes dnclient's state directory for the network (`/var/lib/defined/<network>/`, or `$DNCLIENT_STATE_DIR/<network>/`)
 4. Restarts the `dnclient@<network>.service`
 
 This ensures the host is fully cleared from defined.net's system.

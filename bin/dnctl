@@ -152,9 +152,24 @@ else
 fi
 }
 
-# Determine service name and config path based on DN_NETWORK_NAME
+# Determine service name based on DN_NETWORK_NAME
 SERVICE_NAME="dnclient@${DN_NETWORK_NAME}.service"
-CONFIG_PATH="/etc/defined/${DN_NETWORK_NAME}/dnclient.yml"
+
+# dnclient keeps each network's state under its state dir (dnclient -config, env
+# DNCLIENT_STATE_DIR, default /var/lib/defined). dnctl used to look in /etc/defined,
+# so hosts set up that way are still recognized.
+: "${DNCLIENT_STATE_DIR:=/var/lib/defined}"
+
+config_dir(){
+    local dir
+    for dir in "${DNCLIENT_STATE_DIR}/${DN_NETWORK_NAME}" "/etc/defined/${DN_NETWORK_NAME}"; do
+        if [[ -f "${dir}/dnclient.yml" ]]; then
+            echo "${dir}"
+            return 0
+        fi
+    done
+    return 1
+}
 
 start(){
     systemctl start "$SERVICE_NAME"
@@ -265,8 +280,8 @@ enroll(){
         fi
     fi
 
-    if [[ -f "$CONFIG_PATH" ]]; then
-        echo "$CONFIG_PATH found! Host is already enrolled locally. Skipping enrollment..."
+    if CONFIG_DIR=$(config_dir); then
+        echo "${CONFIG_DIR}/dnclient.yml found! Host is already enrolled locally. Skipping enrollment..."
         exit 0
     fi
 
@@ -295,10 +310,16 @@ enroll(){
 
     # Check if host with this name is already enrolled in defined.net
     echo "Checking if host '${ENROLLMENT_HOSTNAME}' is already enrolled..."
-    EXISTING_HOST=$(curl -H user-agent:defined-systemd-units -s -L \
+    HOSTS_RESPONSE=$(curl -H user-agent:defined-systemd-units -sS -L \
         "https://api.defined.net/v1/hosts?networkID=${DN_NETWORK_ID}&name=${ENROLLMENT_HOSTNAME}" \
         -H "Accept: application/json" \
-        -H "Authorization: Bearer ${DN_API_KEY}" | jq -r '.data[0].id // empty')
+        -H "Authorization: Bearer ${DN_API_KEY}")
+    HOSTS_ERRORS=$(echo "${HOSTS_RESPONSE}" | jq -c '.errors // empty')
+    if [[ -n "${HOSTS_ERRORS}" ]]; then
+        echo "Could not look up '${ENROLLMENT_HOSTNAME}' in defined.net: ${HOSTS_ERRORS}"
+        echo "The API key needs the hosts:list scope for this check. Trying to enroll anyway..."
+    fi
+    EXISTING_HOST=$(echo "${HOSTS_RESPONSE}" | jq -r '.data[0].id // empty')
 
     if [[ -n "${EXISTING_HOST}" ]]; then
         echo "Host '${ENROLLMENT_HOSTNAME}' is already enrolled in defined.net (ID: ${EXISTING_HOST}). Skipping enrollment..."
@@ -367,7 +388,11 @@ enroll(){
     --data-raw "${ENROLLMENT_DATA}")
     echo "Enrollment Response: ${ENROLLMENT_RESPONSE}"
 
-    ENROLLMENT_CODE=$(echo "${ENROLLMENT_RESPONSE}" | jq -r .data.enrollmentCode.code)
+    ENROLLMENT_CODE=$(echo "${ENROLLMENT_RESPONSE}" | jq -r '.data.enrollmentCode.code // empty')
+    if [[ -z "${ENROLLMENT_CODE}" ]]; then
+        echo "defined.net returned no enrollment code: $(echo "${ENROLLMENT_RESPONSE}" | jq -c '.errors // .') Exiting!"
+        exit 1
+    fi
     echo "Enrollment Code: ${ENROLLMENT_CODE}"
 
     echo "Enrolling Host: $(echo "${ENROLLMENT_RESPONSE}" | jq -r .data.host.id)"
@@ -392,21 +417,18 @@ unenroll(){
         echo "System is rebooting but DN_UNENROLL_ON_REBOOT=true. Proceeding with unenroll..."
     fi
 
-    if [[ -f "$CONFIG_PATH" ]]; then
-        DN_HOST_ID=$(grep -F host_id "$CONFIG_PATH" | awk '{ print $2 }' | head -1 )
-    else
-        echo "$CONFIG_PATH is not found! Is this host enrolled? Exiting.."
+    if ! CONFIG_DIR=$(config_dir); then
+        echo "No dnclient.yml for ${DN_NETWORK_NAME} in ${DNCLIENT_STATE_DIR} or /etc/defined! Is this host enrolled? Exiting.."
         exit 1
     fi
+    DN_HOST_ID=$(grep -F host_id "${CONFIG_DIR}/dnclient.yml" | awk '{ print $2 }' | head -1 )
 
     echo "Unenrolling host: ${DN_HOST_ID}"
     curl -H user-agent:defined-systemd-units -sSL -X DELETE "https://api.defined.net/v1/hosts/${DN_HOST_ID}" \
     -H "Accept: application/json" \
     -H "Authorization: Bearer ${DN_API_KEY}"
 
-    # Remove config directory to fully clear state
-    CONFIG_DIR="/etc/defined/${DN_NETWORK_NAME}"
-
+    # Remove the network's dnclient state directory (CONFIG_DIR) to fully clear state.
     # During shutdown, systemd is already stopping services - don't try to stop/start
     # as it causes deadlocks. Just remove the config.
     if is_shutting_down; then
@@ -453,8 +475,9 @@ environment variables:
     DN_ROLE_ID: Role ID to assign to host (required)
     DN_NETWORK_NAME: Network name for instantiated services (default: defined)
         - Uses dnclient@${DN_NETWORK_NAME}.service
-        - Uses /etc/defined/${DN_NETWORK_NAME}/dnclient.yml
+        - Reads dnclient state from ${DNCLIENT_STATE_DIR}/${DN_NETWORK_NAME}/dnclient.yml
         - Sets tun.dev interface to ${DN_NETWORK_NAME}
+    DNCLIENT_STATE_DIR: dnclient's state directory (default: /var/lib/defined, as in dnclient)
     DN_HOSTNAME: Base display name in defined.net admin (defaults to hostname)
     DN_CLOUD_PROVIDER: Cloud provider for instance ID (aws, gcp, azure)
         When set, appends instance ID to hostname for unique names
